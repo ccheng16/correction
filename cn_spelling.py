@@ -5,6 +5,7 @@ import re
 import time
 import pypinyin
 import pickle
+import math
 import wubi
 import numpy as np
 from pypinyin import pinyin, lazy_pinyin
@@ -13,7 +14,7 @@ from langconv import *
 
 print('Loading models...')
 
-model_path = './kenmodels/zhwiki.klm'
+model_path = './kenmodels/zhwiki_trigram.klm'
 model = kenlm.Model(model_path)
 
 text_path = './data/wikipedia/cn_wiki.txt'
@@ -44,6 +45,22 @@ else:
     pickle.dump(common, open(common_dict_path, 'wb'))
 common_mistakes = common.keys()
 
+sims_dict_path = './data/sims.pickle' # Path of similar shape characters dict
+if os.path.exists(sims_dict_path):
+    sims = pickle.load(open(sims_dict_path, 'rb'))
+    print('Loaded similar shape dict from file: {}'.format(sims_dict_path))
+else:
+    sims = {}
+    pickle.dump(sims, open(sims_dict_path, 'wb'))
+
+simp_dict_path = './data/simp_simplified.pickle' # Path of similar pronunciation characters dict
+if os.path.exists(simp_dict_path):
+    simp = pickle.load(open(simp_dict_path, 'rb'))
+    print('Loaded similar pronunciation dict from file: {}'.format(simp_dict_path))
+else:
+    simp = {}
+    pickle.dump(simp, open(simp_dict_path, 'wb'))
+
 print('Models loaded.')
 
 # 输入汉字，查询同音字
@@ -69,11 +86,11 @@ def simtone(in_pinyin):
     pass
 
 # 五笔形近字
-def simshape(in_char, frac=5):
+def simshape(in_char, frac=1):
     in_wubi = wubi.get(in_char, 'cw') # Get wubi code
     edit_wubi = edits1(in_wubi)
-    valid_char_list = list(wubi_known(edit_wubi))
-    return sorted(valid_char_list, key=lambda k: getf(k), reverse=True)[:len(valid_char_list)//frac+1]
+    simshape_list = list(wubi_known(edit_wubi))
+    return sorted(simshape_list, key=lambda k: getf(k), reverse=True)[:len(simshape_list)//frac]
     # return list(wubi_known(edit_wubi))
 
 # Get the frequency of a single character in the text
@@ -111,19 +128,29 @@ def add_xingjinzi(line, delimeter=','):
     pickle.dump(xingjinzi, open(xjz_dict_path, 'wb'))
 
 def get_xingjinzi(in_char):
-    return xingjinzi.get(in_char, [])
+    return set(xingjinzi.get(in_char, []))
 
-def gen_chars(in_char, frac=10):
-    # char_list = samechr(in_char) + simshape(in_char, frac=10)
-    char_list = samechr(in_char)
-    if not char_list:
-        char_list = [in_char]
-    return sorted(char_list, key=lambda k: getf(k), reverse=True)[:len(char_list)//frac+1] + get_xingjinzi(in_char)
+def get_simshape(in_char):
+    return sims.get(in_char, set())
+
+def get_simpronunciation(in_char):
+    return simp.get(in_char, set())
+
+def gen_chars(in_char, frac=2):
+    # chars_set = get_simshape(in_char).union(get_simpronunciation(in_char))
+    # chars_set = get_simpronunciation(in_char)
+    chars_set = get_simpronunciation(in_char).union(get_xingjinzi(in_char))
+    if not chars_set:
+        chars_set = {in_char}
+    chars_set.add(in_char)
+    chars_list = list(chars_set)
+    return sorted(chars_list, key=lambda k: getf(k), reverse=True)[:len(chars_list)//frac+1]
 
 def get_score(s):
     return model.score(' '.join(s), bos=False, eos=False)
 
 def merge_ranges(ranges):
+    print('Length of ranges is {}'.format(len(ranges)))
     saved = ranges[0][:]
     results = []
     for st, en in ranges:
@@ -151,8 +178,12 @@ def score_sentence(ss, k):
         scores.append(score)
     mad_based_outlier(np.array(scores), threshold=2.8)
     outindices,_ = percentile_based_outlier(np.array(scores), threshold=93)
-    outranges = merge_ranges([[outindex, outindex+k] for outindex in outindices])
-    print('outranges are {}'.format(outranges))
+    if outindices:
+        outranges = merge_ranges([[outindex, outindex+k] for outindex in outindices])
+        print('outranges are {}'.format(outranges))
+    else:
+        outranges = None
+        print('No outranges.')
     zipped = zip(ngrams, [round(score, 3) for score in scores])
     print(list(zipped))
     return mini, outranges, ss[mini:mini+k], zipped
@@ -194,24 +225,27 @@ def correct_ngram(ss, st, en):
                 candidates.add(c + gc)
             candidates.remove(c)
     print('Number of candidate ngrams is {}'.format(len(candidates)))
-    cgram = max(candidates, key=lambda k: get_score(ss[:st] + k + ss[en:]))
+    cgram = max(candidates, key=lambda k: get_score(ss[:st] + k + ss[en:]) + get_score(k) + math.log(135)**(k == mingram)) # get_score(ss[:st] + k + ss[en:])
     return cgram
 
 def correct(ss, k):
     ss = correct_common(ss)
     mini, outranges, mingram, _ = score_sentence(ss, k)
-    for outrange in outranges:
-        st, en = outrange
-        print('Possible wrong gram is {}'.format(ss[st:en]))
-        cgram = correct_ngram(ss, st, en)
-        print('Corrected ngram is {}'.format(cgram))
-        ss = ss[:st] + cgram + ss[en:]
+    if outranges:
+        for outrange in outranges:
+            st, en = outrange
+            print('Possible wrong ngram is {}'.format(ss[st:en]))
+            cgram = correct_ngram(ss, st, en)
+            print('Corrected ngram is {}'.format(cgram))
+            ss = ss[:st] + cgram + ss[en:]
+    else:
+        print('No ngram to correct.')
     return ss
 
 def main():
     line = '我们现今所使用的大部分舒学福号'
     print('The sentence is {}'.format(line))
-    print('Corrected sentence is {}'.format(correct(line, 4)))
+    print('Corrected sentence is {}'.format(correct(line, 3)))
     print('-------------------------------------------------------------------------------------')
     DryInput_path = './data/sighan/clp14csc_release1.1/Dryrun/CLP14_CSC_DryRun_Input.txt'
     with open(DryInput_path, 'r') as f:
@@ -219,7 +253,7 @@ def main():
     for line in lines.splitlines():
         sentence = Converter('zh-hans').convert(line.split()[1])
         print('The sentence is {}'.format(sentence))
-        print('Corrected sentence is {}'.format(correct(sentence, 5)))
+        print('Corrected sentence is {}'.format(correct(sentence, 3)))
         print('-------------------------------------------------------------------------------------')
 
 if __name__=='__main__':
