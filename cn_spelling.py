@@ -15,7 +15,7 @@ from langconv import *
 
 print('Loading models...')
 
-model_path = './kenmodels/zhwiki_trigram.klm'
+model_path = './kenmodels/zhwiki_4gram.klm'
 model = kenlm.Model(model_path)
 
 text_path = './data/wikipedia/cn_wiki.txt'
@@ -150,8 +150,31 @@ def gen_chars(in_char, frac=2):
 def get_score(s):
     return model.score(' '.join(s), bos=False, eos=False)
 
+def overlap(l1, l2):
+    if l1[0] < l2[0]:
+        if l1[1] <= l2[0]:
+            return False
+        else:
+            return True
+    elif l1[0] == l2[0]:
+        return True
+    else:
+        if l1[0] >= l2[1]:
+            return False
+        else:
+            return True
+
+def get_ranges(outranges, segranges):
+    overlap_ranges = set()
+    for segrange in segranges:
+        for outrange in outranges:
+            if overlap(outrange, segrange):
+                overlap_ranges.add(tuple(segrange))
+    return [list(overlap_range) for overlap_range in overlap_ranges]
+
 def merge_ranges(ranges):
     print('Length of ranges is {}'.format(len(ranges)))
+    ranges = sorted(ranges)
     saved = ranges[0][:]
     results = []
     for st, en in ranges:
@@ -209,6 +232,23 @@ def percentile_based_outlier(points, threshold=95):
     print('Percentile based outlier scores are {}'.format(outliers))
     return list(outindices[0]), outliers
 
+def preprocess(ss):
+    # TODO
+    # Sentence final-particle detection
+    rs = ''
+    for s in ss:
+        code = ord(s)
+        if code == 12288:
+            code = 32
+        elif code == 8216 or code == 8217:
+            code = 39
+        elif (code >= 65281 and code <= 65374):
+            code -= 65248
+        rs += chr(code)
+    punc = ['「', '」'] # punctuations to remove from the sentence
+    rs = re.sub('|'.join(punc), '', rs)
+    return rs
+
 def correct_common(ss):
     for mistake in common_mistakes:
         ss = re.sub(mistake, common[mistake], ss)
@@ -231,21 +271,24 @@ def correct_ngram(ss, st, en):
 
 def correct_ngram_2(ss, st, en):
     mingram = ss[st:en]
-    cuts = list(jieba.cut(ss, cut_all=False))
-    indices = [ss.index(cut) for cut in cuts] # indices of the segments in the sentence
     for i, m in enumerate(mingram):
         mc = gen_chars(m) # Possible corrections for character m in mingram
         print('Number of possible replacements for {} is {}'.format(m, len(mc)))
-        mg = max(mc, key=lambda k: get_score(ss[:st] + mingram[:i] + k + mingram[i:] + ss[en:]) + math.log(8)**(k == m))
+        mg = max(mc, key=lambda k: get_score(ss[:st] + mingram[:i] + k + mingram[i:] + ss[en:]) + math.log(9)**(k == m))
         mingram = mingram[:i] + mg + mingram[i+1:]
     return mingram
 
 def correct(ss, k):
+    ss = preprocess(ss)
     ss = correct_common(ss)
+    tokens = list(jieba.tokenize(ss)) # Returns list of tuples (word, st, en)  mode='search'?
+    print('Segmented sentence is {}'.format(''.join([str(token) for token in tokens])))
+    segranges = [[token[1], token[2]] for token in tokens]
     mini, outranges, mingram, _ = score_sentence(ss, k)
     if outranges:
-        for outrange in outranges:
-            st, en = outrange
+        correct_ranges = get_ranges(outranges, segranges)
+        for correct_range in correct_ranges:
+            st, en = correct_range
             print('Possible wrong ngram is {}'.format(ss[st:en]))
             cgram = correct_ngram_2(ss, st, en)
             print('Corrected ngram is {}'.format(cgram))
