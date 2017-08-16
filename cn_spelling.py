@@ -4,6 +4,7 @@ import os
 import re
 import time
 import pypinyin
+import jieba
 import pickle
 import math
 import wubi
@@ -218,7 +219,7 @@ def correct_ngram(ss, st, en):
     candidates = {''}
     for g in mingram:
         gchars = gen_chars(g)
-        print('Number of possible replacement for {} is {}'.format(g, len(gchars)))
+        print('Number of possible replacements for {} is {}'.format(g, len(gchars)))
         cand = candidates.copy()
         for c in cand:
             for gc in gchars:
@@ -228,6 +229,17 @@ def correct_ngram(ss, st, en):
     cgram = max(candidates, key=lambda k: get_score(ss[:st] + k + ss[en:]) + get_score(k) + math.log(135)**(k == mingram)) # get_score(ss[:st] + k + ss[en:])
     return cgram
 
+def correct_ngram_2(ss, st, en):
+    mingram = ss[st:en]
+    cuts = list(jieba.cut(ss, cut_all=False))
+    indices = [ss.index(cut) for cut in cuts] # indices of the segments in the sentence
+    for i, m in enumerate(mingram):
+        mc = gen_chars(m) # Possible corrections for character m in mingram
+        print('Number of possible replacements for {} is {}'.format(m, len(mc)))
+        mg = max(mc, key=lambda k: get_score(ss[:st] + mingram[:i] + k + mingram[i:] + ss[en:]) + math.log(8)**(k == m))
+        mingram = mingram[:i] + mg + mingram[i+1:]
+    return mingram
+
 def correct(ss, k):
     ss = correct_common(ss)
     mini, outranges, mingram, _ = score_sentence(ss, k)
@@ -235,7 +247,7 @@ def correct(ss, k):
         for outrange in outranges:
             st, en = outrange
             print('Possible wrong ngram is {}'.format(ss[st:en]))
-            cgram = correct_ngram(ss, st, en)
+            cgram = correct_ngram_2(ss, st, en)
             print('Corrected ngram is {}'.format(cgram))
             ss = ss[:st] + cgram + ss[en:]
     else:
