@@ -15,11 +15,25 @@ from langconv import *
 
 print('Loading models...')
 
-model_path = './kenmodels/zhwiki_4gram.klm'
-model = kenlm.Model(model_path)
+bimodel_path = './kenmodels/zhwiki_bigram.klm'
+bimodel = kenlm.Model(bimodel_path)
+print('Loaded bigram language model from {}'.format(bimodel_path))
+
+trimodel_path = './kenmodels/zhwiki_trigram.klm'
+trimodel = kenlm.Model(trimodel_path)
+print('Loaded trigram language model from {}'.format(trimodel_path))
+
+_4model_path = './kenmodels/zhwiki_4gram.klm'
+_4model = kenlm.Model(_4model_path)
+print('Loaded 4-gram language model from {}'.format(_4model_path))
+
+wordmodel_path = './kenmodels/zhwiki_word_bigram.klm'
+wordmodel = kenlm.Model(wordmodel_path)
+print('Loaded word-level bigram language model from {}'.format(wordmodel_path))
 
 text_path = './data/wikipedia/cn_wiki.txt'
 counter_path = './data/wikipedia/cn_wiki_counter.pkl'
+
 if os.path.exists(counter_path):
     print('Loading Counter from file: {}'.format(counter_path))
     counter = pickle.load(open(counter_path, 'rb'))
@@ -147,8 +161,16 @@ def gen_chars(in_char, frac=2):
     chars_list = list(chars_set)
     return sorted(chars_list, key=lambda k: getf(k), reverse=True)[:len(chars_list)//frac+1]
 
-def get_score(s):
+def get_score(s, model=bimodel):
     return model.score(' '.join(s), bos=False, eos=False)
+
+def get_model(k):
+    return {
+        2: bimodel,
+        3: trimodel,
+        4: _4model,
+        5: wordmodel
+    }.get(k, bimodel) # Return the bigram model as default
 
 def overlap(l1, l2):
     if l1[0] < l2[0]:
@@ -174,7 +196,7 @@ def get_ranges(outranges, segranges):
 
 def merge_ranges(ranges):
     print('Length of ranges is {}'.format(len(ranges)))
-    ranges = sorted(ranges)
+    ranges.sort()
     saved = ranges[0][:]
     results = []
     for st, en in ranges:
@@ -195,7 +217,8 @@ def score_sentence(ss, k):
     for i in range(len(ss) - k + 1):
         ngram = ss[i:i+k]
         ngrams.append(ngram)
-        score = get_score(ngram)
+        
+        score = get_score(ngram, model=get_model(k))
         if score < minscore:
             minscore = score
             mini = i
@@ -232,9 +255,20 @@ def percentile_based_outlier(points, threshold=95):
     print('Percentile based outlier scores are {}'.format(outliers))
     return list(outindices[0]), outliers
 
-def preprocess(ss):
-    # TODO
+def detect_final_particle(ss):
+    #TODO
     # Sentence final-particle detection
+    last_char = ss[-2]
+    # 马 码 -> 吗   把 巴 -> 吧     阿 -> 啊
+    if last_char == '马' or last_char == '码':
+        ss = ss[:-2] + '吗' + ss[-1]
+    elif last_char == '把' or last_char == '巴':
+        ss = ss[:-2] + '吧' + ss[-1]
+    elif last_char == '阿':
+        ss = ss[:-2] + '啊' + ss[-1]
+    return ss
+
+def preprocess(ss):
     rs = ''
     for s in ss:
         code = ord(s)
@@ -274,7 +308,7 @@ def correct_ngram_2(ss, st, en):
     for i, m in enumerate(mingram):
         mc = gen_chars(m) # Possible corrections for character m in mingram
         print('Number of possible replacements for {} is {}'.format(m, len(mc)))
-        mg = max(mc, key=lambda k: get_score(ss[:st] + mingram[:i] + k + mingram[i:] + ss[en:]) + math.log(9)**(k == m))
+        mg = max(mc, key=lambda k: get_score(ss[:st] + mingram[:i] + k + mingram[i:] + ss[en:]) + math.log(12)**(k == m))
         mingram = mingram[:i] + mg + mingram[i+1:]
     return mingram
 
