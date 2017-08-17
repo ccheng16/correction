@@ -227,9 +227,8 @@ def score_sentence(ss):
             score = get_score(ngram, model=get_model(k))
             # for _ in range(k):
             scores.append(score)
-
-        mad_based_outlier(np.array(list(scores)), threshold=2.8)
-        outindices,_ = percentile_based_outlier(np.array(list(scores)), threshold=93)
+        percentile_based_outlier(np.array(list(scores)), threshold=93)
+        outindices, _ = mad_based_outlier(np.array(list(scores)), threshold=1.2)
         if outindices:
             outranges = merge_ranges([[outindex, outindex+k] for outindex in outindices])
             print('outranges are {}'.format(outranges))
@@ -246,19 +245,29 @@ def score_sentence(ss):
             scores.append(scores[-1])
         avg_scores = [sum(scores[i:i+k]) / len(scores[i:i+k]) for i in range(len(ss))]
         havg_scores.append(avg_scores)
-    return havg_scores, houtranges, hscores
+    per_word_scores = list(np.average(np.array(havg_scores), axis=0))
+    outindices, _ = mad_based_outlier(np.array(list(per_word_scores)), threshold=1.2)
+    if outindices:
+        outranges = merge_ranges([[outindex, outindex+k] for outindex in outindices])
+        print('outranges are {}'.format(outranges))
+    else:
+        outranges = []
+        print('No outranges.')
+    return per_word_scores, houtranges, hscores, outranges
 
-def mad_based_outlier(points, threshold=1.5):
+def mad_based_outlier(points, threshold=1.2):
+    points = np.array(points)
     if len(points.shape) == 1:
         points = points[:, None]
     median = np.median(points, axis=0) # get the median of all points
     diff = np.sqrt(np.sum((points - median)**2, axis=-1)) # deviation from the median
     med_abs_deviation = np.median(diff) # median absolute deviation (MAD)
     modified_z_score = 0.6745 * diff / med_abs_deviation
-    outliers = points[modified_z_score > threshold]
-    outliers = outliers[outliers < median]
+    points = points.flatten()
+    outindices = np.where((modified_z_score > threshold) & (points < median))
+    outliers = points[outindices]
     print('Mad based outlier scores are {}'.format(outliers))
-    return outliers
+    return list(outindices[0]), outliers
 
 def percentile_based_outlier(points, threshold=95):
     diff = (100 - threshold) / 2.0
@@ -331,7 +340,8 @@ def correct(ss, k):
     tokens = list(jieba.tokenize(ss)) # Returns list of tuples (word, st, en)  mode='search'?
     print('Segmented sentence is {}'.format(''.join([str(token) for token in tokens])))
     segranges = [[token[1], token[2]] for token in tokens]
-    outranges, hscores = score_sentence(ss, k)
+    # outranges, hscores = score_sentence(ss, k)
+    per_word_scores, houtranges, hscores, outranges = score_sentence(ss)
     if outranges:
         correct_ranges = get_ranges(outranges, segranges)
         for correct_range in correct_ranges:
