@@ -213,40 +213,50 @@ def merge_ranges(ranges):
     results.append(saved[:])
     return results
 
-def score_sentence(ss, k):
-    ngrams = []
-    scores = []
-    mini = 0
-    minscore = 0
-    for i in range(len(ss) - k + 1):
-        ngram = ss[i:i+k]
-        ngrams.append(ngram)
-        score = get_score(ngram, model=get_model(k))
-        if score < minscore:
-            minscore = score
-            mini = i
-        scores.append(score)
-    mad_based_outlier(np.array(scores), threshold=2.8)
-    outindices,_ = percentile_based_outlier(np.array(scores), threshold=93)
-    if outindices:
-        outranges = merge_ranges([[outindex, outindex+k] for outindex in outindices])
-        print('outranges are {}'.format(outranges))
-    else:
-        outranges = None
-        print('No outranges.')
-    zipped = zip(ngrams, [round(score, 3) for score in scores])
-    print(list(zipped))
-    return mini, outranges, ss[mini:mini+k], zipped
+def score_sentence(ss):
+    hngrams = []
+    hscores = [] # hierachical scores
+    houtranges = []
+    havg_scores = []
+    for k in [2, 3, 4]:
+        ngrams = []
+        scores = []
+        for i in range(len(ss) - k + 1):
+            ngram = ss[i:i+k]
+            ngrams.append(ngram)
+            score = get_score(ngram, model=get_model(k))
+            # for _ in range(k):
+            scores.append(score)
 
-def mad_based_outlier(points, threshold=3.5):
+        mad_based_outlier(np.array(list(scores)), threshold=2.8)
+        outindices,_ = percentile_based_outlier(np.array(list(scores)), threshold=93)
+        if outindices:
+            outranges = merge_ranges([[outindex, outindex+k] for outindex in outindices])
+            print('outranges are {}'.format(outranges))
+        else:
+            outranges = []
+            print('No outranges.')
+        hngrams.append(ngrams)
+        houtranges.append(outranges)
+        zipped = zip(ngrams, [round(score, 3) for score in scores])
+        print(list(zipped))
+        hscores.append(scores)
+        for _ in range(k-1):
+            scores.insert(0, scores[0])
+            scores.append(scores[-1])
+        avg_scores = [sum(scores[i:i+k]) / len(scores[i:i+k]) for i in range(len(ss))]
+        havg_scores.append(avg_scores)
+    return havg_scores, houtranges, hscores
+
+def mad_based_outlier(points, threshold=1.5):
     if len(points.shape) == 1:
         points = points[:, None]
-    median = np.median(points, axis=0)
-    diff = np.sum((points - median)**2, axis=-1)
-    diff = np.sqrt(diff)
-    med_abs_deviation = np.median(diff)
+    median = np.median(points, axis=0) # get the median of all points
+    diff = np.sqrt(np.sum((points - median)**2, axis=-1)) # deviation from the median
+    med_abs_deviation = np.median(diff) # median absolute deviation (MAD)
     modified_z_score = 0.6745 * diff / med_abs_deviation
     outliers = points[modified_z_score > threshold]
+    outliers = outliers[outliers < median]
     print('Mad based outlier scores are {}'.format(outliers))
     return outliers
 
@@ -261,7 +271,7 @@ def percentile_based_outlier(points, threshold=95):
 def detect_final_particle(ss):
     # Sentence final-particle detection
     last_char = ss[-2]
-    # 马 码 -> 吗   把 巴 -> 吧     阿 -> 啊
+    # 马 码 -> 吗      把 巴 -> 吧      阿 -> 啊
     if last_char == '马' or last_char == '码':
         ss = ss[:-2] + '吗' + ss[-1]
     elif last_char == '把' or last_char == '巴':
@@ -321,7 +331,7 @@ def correct(ss, k):
     tokens = list(jieba.tokenize(ss)) # Returns list of tuples (word, st, en)  mode='search'?
     print('Segmented sentence is {}'.format(''.join([str(token) for token in tokens])))
     segranges = [[token[1], token[2]] for token in tokens]
-    mini, outranges, mingram, _ = score_sentence(ss, k)
+    outranges, hscores = score_sentence(ss, k)
     if outranges:
         correct_ranges = get_ranges(outranges, segranges)
         for correct_range in correct_ranges:
