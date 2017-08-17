@@ -15,6 +15,8 @@ from langconv import *
 
 print('Loading models...')
 
+jieba.initialize()
+
 bimodel_path = './kenmodels/zhwiki_bigram.klm'
 bimodel = kenlm.Model(bimodel_path)
 print('Loaded bigram language model from {}'.format(bimodel_path))
@@ -256,7 +258,6 @@ def percentile_based_outlier(points, threshold=95):
     return list(outindices[0]), outliers
 
 def detect_final_particle(ss):
-    #TODO
     # Sentence final-particle detection
     last_char = ss[-2]
     # 马 码 -> 吗   把 巴 -> 吧     阿 -> 啊
@@ -281,6 +282,7 @@ def preprocess(ss):
         rs += chr(code)
     punc = ['「', '」'] # punctuations to remove from the sentence
     rs = re.sub('|'.join(punc), '', rs)
+    rs = detect_final_particle(rs)
     return rs
 
 def correct_common(ss):
@@ -347,3 +349,4 @@ def main():
 
 if __name__=='__main__':
     main()
+t 0x7f5f63428308>
