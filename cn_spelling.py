@@ -166,15 +166,17 @@ def gen_chars(in_char, frac=2):
 def get_score(s, model=bimodel):
     return model.score(' '.join(s), bos=False, eos=False)
 
+def get_wordmodel_score(ss):
+    return wordmodel.score(' '.join(jieba.lcut(ss)), bos=False, eos=False)
+
 def get_model(k):
     return {
         2: bimodel,
         3: trimodel,
         4: _4model,
-        5: wordmodel
     }.get(k, bimodel) # Return the bigram model as default
 
-def overlap(l1, l2):
+def overlap(l1, l2): # Detect whether two intervals l1 and l2 overlap
     if l1[0] < l2[0]:
         if l1[1] <= l2[0]:
             return False
@@ -219,7 +221,6 @@ def score_sentence(ss, k):
     for i in range(len(ss) - k + 1):
         ngram = ss[i:i+k]
         ngrams.append(ngram)
-        
         score = get_score(ngram, model=get_model(k))
         if score < minscore:
             minscore = score
@@ -349,4 +350,3 @@ def main():
 
 if __name__=='__main__':
     main()
-t 0x7f5f63428308>
