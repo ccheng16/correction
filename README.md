@@ -21,5 +21,8 @@ A project to correct spelling errors in Chinese texts
 ```
 data
 ```
+sighan
+```
+```
 
 ### 参考链接
