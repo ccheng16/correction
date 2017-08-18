@@ -18,6 +18,8 @@ A project to correct spelling errors in Chinese texts
 * 从现实中收集更多的有语病或错别字的句子并标注
 
 ### 文件结构
-
+```
+data
+```
 
 ### 参考链接
