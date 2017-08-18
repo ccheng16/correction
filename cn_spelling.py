@@ -1,6 +1,7 @@
 import kenlm
 import codecs
 import os
+import sys
 import re
 import time
 import pypinyin
@@ -12,6 +13,8 @@ import numpy as np
 from pypinyin import pinyin, lazy_pinyin
 from collections import Counter
 from langconv import *
+sys.path.append('./tf_char_rnn')
+import sample
 
 print('Loading models...')
 
@@ -36,6 +39,7 @@ print('Loaded word-level bigram language model from {}'.format(wordmodel_path))
 text_path = './data/wikipedia/cn_wiki.txt'
 counter_path = './data/wikipedia/cn_wiki_counter.pkl'
 
+# Load the character Counter (字频统计)
 if os.path.exists(counter_path):
     print('Loading Counter from file: {}'.format(counter_path))
     counter = pickle.load(open(counter_path, 'rb'))
@@ -45,8 +49,9 @@ else:
     pickle.dump(counter, open(counter_path, 'wb'))
     print('Dumped Counter to {}'.format(counter_path))
 
-total = sum(counter.values())
+total = sum(counter.values()) # Total number of characters in text
 
+# 形近字dictionary
 xjz_dict_path = './data/xjz.pkl'
 if os.path.exists(xjz_dict_path):
     xingjinzi = pickle.load(open(xjz_dict_path, 'rb'))
@@ -54,6 +59,7 @@ else:
     xingjinzi = {}
     pickle.dump(xingjinzi, open(xjz_dict_path, 'wb'))
 
+# 常见错误dictionary
 common_dict_path = './data/common.pkl'
 if os.path.exists(common_dict_path):
     common = pickle.load(open(common_dict_path, 'rb'))
@@ -62,6 +68,7 @@ else:
     pickle.dump(common, open(common_dict_path, 'wb'))
 common_mistakes = common.keys()
 
+# 加载形近字dictionary
 sims_dict_path = './data/sims.pickle' # Path of similar shape characters dict
 if os.path.exists(sims_dict_path):
     sims = pickle.load(open(sims_dict_path, 'rb'))
@@ -70,6 +77,7 @@ else:
     sims = {}
     pickle.dump(sims, open(sims_dict_path, 'wb'))
 
+# 加载音近字dictionary
 simp_dict_path = './data/simp_simplified.pickle' # Path of similar pronunciation characters dict
 if os.path.exists(simp_dict_path):
     simp = pickle.load(open(simp_dict_path, 'rb'))
@@ -110,7 +118,7 @@ def simshape(in_char, frac=1):
     return sorted(simshape_list, key=lambda k: getf(k), reverse=True)[:len(simshape_list)//frac]
     # return list(wubi_known(edit_wubi))
 
-# Get the frequency of a single character in the text
+# Get the frequency of a single character in the Wiki text
 def getf(char):
     return counter[char] / total
     
@@ -133,11 +141,13 @@ def edits2(word):
     "All edits that are two edits away from `word`."
     return (e2 for e1 in edits1(word) for e2 in edits1(e1))
 
+# 添加entry到常见错误dictionary
 def add_common_mistake(mistake_word, correct_word):
     common[mistake_word] = correct_word
     common_mistakes.append(mistake_word)
     pickle.dump(common, open(common_dict_path, 'wb'))
 
+# 添加形近字组
 def add_xingjinzi(line, delimeter=','):
     chars = line.split(delimeter)
     for i, char in enumerate(chars):
@@ -154,8 +164,8 @@ def get_simpronunciation(in_char):
     return simp.get(in_char, set())
 
 def gen_chars(in_char, frac=2):
-    # chars_set = get_simshape(in_char).union(get_simpronunciation(in_char))
-    # chars_set = get_simpronunciation(in_char)
+    # Get confusion characters of in_char from the confusion sets
+    # frac: get top 1/frac in terms of character frequency
     chars_set = get_simpronunciation(in_char).union(get_xingjinzi(in_char))
     if not chars_set:
         chars_set = {in_char}
@@ -167,7 +177,13 @@ def get_score(s, model=bimodel):
     return model.score(' '.join(s), bos=False, eos=False)
 
 def get_wordmodel_score(ss):
-    return wordmodel.score(' '.join(jieba.lcut(ss)), bos=False, eos=False)
+    # Get the score of word-segmented sentence from word-level language model
+    cuts = jieba.lcut(ss, HMM=False)
+    seg_sentence = ' '.join(cuts)
+    print('The segmented sentence is {}'.format(seg_sentence), end=' ')
+    score = wordmodel.score(seg_sentence, bos=False, eos=False) / len(cuts) - len(cuts)
+    print('The score is {}'.format(round(score, 4)))
+    return score
 
 def get_model(k):
     return {
@@ -176,7 +192,9 @@ def get_model(k):
         4: _4model,
     }.get(k, bimodel) # Return the bigram model as default
 
-def overlap(l1, l2): # Detect whether two intervals l1 and l2 overlap
+def overlap(l1, l2): 
+    # Detect whether two intervals l1 and l2 overlap
+    # inputs: l1, l2 are lists representing intervals
     if l1[0] < l2[0]:
         if l1[1] <= l2[0]:
             return False
@@ -192,6 +210,8 @@ def overlap(l1, l2): # Detect whether two intervals l1 and l2 overlap
 
 def get_ranges(outranges, segranges):
     # Get the overlap ranges of outranges and segranges
+    # outranges: ranges corresponding to score outliers
+    # segranges: ranges corresponding to word segmentation scores
     overlap_ranges = set()
     for segrange in segranges:
         for outrange in outranges:
@@ -200,6 +220,8 @@ def get_ranges(outranges, segranges):
     return [list(overlap_range) for overlap_range in overlap_ranges]
 
 def merge_ranges(ranges):
+    # Merge overlapping ranges
+    # ranges: list of ranges
     ranges.sort()
     saved = ranges[0][:]
     results = []
@@ -213,11 +235,15 @@ def merge_ranges(ranges):
     results.append(saved[:])
     return results
 
+def nlm_score_sentence(ss):
+    scores = sample.score(ss) # Use LSTM RNN language model to score the sentence
+    return scores # Returns a list of scores with the same length as ss (sentence)
+
 def score_sentence(ss):
-    hngrams = []
+    # hierachical: scan the sentence ss with windows of sizes 2, 3, and 4
+    hngrams = [] # hierachical ngrams
     hscores = [] # hierachical scores
-    houtranges = []
-    havg_scores = []
+    havg_scores = [] # hierachical smoothed scores for each character
     for k in [2, 3, 4]:
         ngrams = []
         scores = []
@@ -227,24 +253,25 @@ def score_sentence(ss):
             score = get_score(ngram, model=get_model(k))
             scores.append(score)
         # percentile_based_outlier(np.array(list(scores)), threshold=93)
-        outindices, _ = mad_based_outlier(np.array(list(scores)), threshold=1.2)
-        if outindices:
-            outranges = merge_ranges([[outindex, outindex+k] for outindex in outindices])
-            # print('outranges are {}'.format(outranges))
-        else:
-            outranges = []
-            print('No outranges.')
+        # outindices, _ = mad_based_outlier(np.array(list(scores)), threshold=1.2)
+        # if outindices:
+        #     outranges = merge_ranges([[outindex, outindex+k] for outindex in outindices])
+        #     # print('outranges are {}'.format(outranges))
+        # else:
+        #     outranges = []
+        #     print('No outranges.')
+        # houtranges.append(outranges)
         hngrams.append(ngrams)
-        houtranges.append(outranges)
         zipped = zip(ngrams, [round(score, 3) for score in scores])
         print(list(zipped))
         hscores.append(scores)
-        for _ in range(k-1):
+        # Pad the scores list for moving window average
+        for _ in range(k-1): 
             scores.insert(0, scores[0])
             scores.append(scores[-1])
         avg_scores = [sum(scores[i:i+k]) / len(scores[i:i+k]) for i in range(len(ss))]
         havg_scores.append(avg_scores)
-    per_word_scores = list(np.average(np.array(havg_scores), axis=0))
+    per_word_scores = list(np.average(np.array(havg_scores), axis=0)) # average score for each character in the sentence
     outindices, _ = mad_based_outlier(np.array(list(per_word_scores)), threshold=1.2)
     if outindices:
         outranges = merge_ranges([[outindex, outindex+1] for outindex in outindices])
@@ -252,9 +279,11 @@ def score_sentence(ss):
     else:
         outranges = []
         print('No outranges.')
-    return per_word_scores, houtranges, hscores, outranges
+    return per_word_scores, hscores, outranges
 
 def mad_based_outlier(points, threshold=1.4):
+    # points: list
+    # Smaller threshold gives more outliers
     points = np.array(points)
     if len(points.shape) == 1:
         points = points[:, None]
@@ -289,6 +318,8 @@ def detect_final_particle(ss):
     return ss
 
 def preprocess(ss):
+    # 全角标点转半角
+    # 纠正句尾语气词
     rs = ''
     for s in ss:
         code = ord(s)
@@ -305,12 +336,15 @@ def preprocess(ss):
     return rs
 
 def correct_common(ss):
+    # Search and correct common mistakes
     for mistake in common_mistakes:
         ss = re.sub(mistake, common[mistake], ss)
     return ss
 
 def correct_ngram(ss, st, en):
-    mingram = ss[st:en]
+    # Correct the ngram as a whole piece
+    # Returns cgram: the corrected ngram
+    mingram = ss[st:en] # ngram to correct
     candidates = {''}
     for g in mingram:
         gchars = gen_chars(g)
@@ -321,25 +355,30 @@ def correct_ngram(ss, st, en):
                 candidates.add(c + gc)
             candidates.remove(c)
     print('Number of candidate ngrams is {}'.format(len(candidates)))
-    cgram = max(candidates, key=lambda k: get_score(ss[:st] + k + ss[en:]) + get_score(k) + math.log(135)**(k == mingram)) # get_score(ss[:st] + k + ss[en:])
+    cgram = max(candidates, key=lambda k: get_score(ss[:st] + k + ss[en:]) + get_score(k) + math.log(15)**(k == mingram))
     return cgram
 
 def correct_ngram_2(ss, st, en):
+    # Correct the ngram character by character
+    # Returns the corrected ngram
     mingram = ss[st:en]
     for i, m in enumerate(mingram):
         mc = gen_chars(m) # Possible corrections for character m in mingram
         print('Number of possible replacements for {} is {}'.format(m, len(mc)))
-        mg = max(mc, key=lambda k: get_score(ss[:st] + mingram[:i] + k + mingram[i:] + ss[en:]) + math.log(12)**(k == m))
+        mg = max(mc, key=lambda k: get_wordmodel_score(ss[:st] + mingram[:i] + k + mingram[i+1:] + ss[en:]) + math.log(5)**(k == m))
         mingram = mingram[:i] + mg + mingram[i+1:]
     return mingram
 
-def correct(ss, k):
+def correct(ss):
+    # Correct sentence ss
+    # Returns ss: corrected sentence
+    # Returns correct_ranges: ranges of the sentence that were corrected
     ss = preprocess(ss)
     ss = correct_common(ss)
     tokens = list(jieba.tokenize(ss)) # Returns list of tuples (word, st, en)  mode='search'?
     print('Segmented sentence is {}'.format(''.join([str(token) for token in tokens])))
     segranges = [[token[1], token[2]] for token in tokens]
-    _, _, _, outranges = score_sentence(ss)
+    _, _, outranges = score_sentence(ss)
     if outranges:
         correct_ranges = merge_ranges(get_ranges(outranges, segranges))
         for correct_range in correct_ranges:
@@ -350,13 +389,19 @@ def correct(ss, k):
             print('Corrected ngram is {}'.format(cgram))
             ss = ss[:st] + cgram + ss[en:]
     else:
+        correct_ranges = []
         print('No ngram to correct.')
-    return ss
+    return ss, correct_ranges
 
 def main():
-    line = '我们现今所使用的大部分舒学福号'
+    line = '我们现今所使用的大部分舒学福号' # A sample sentence
+    # scores = nlm_score_sentence(line) # Use LSTM RNN language model to score the sentence
+    # print('NLM scores are {}'.format(scores))
+    # bscores = bsample.score(line)
+    # print('NLM bscores are {}'.format(bscores))
     print('The sentence is {}'.format(line))
-    print('Corrected sentence is {}'.format(correct(line, 3)))
+    corrected_ss, correct_ranges = correct(line)
+    print('Corrected sentence is {}'.format(corrected_ss))
     print('-------------------------------------------------------------------------------------')
     DryInput_path = './data/sighan/clp14csc_release1.1/Dryrun/CLP14_CSC_DryRun_Input.txt'
     with open(DryInput_path, 'r') as f:
@@ -364,8 +409,53 @@ def main():
     for line in lines.splitlines():
         sentence = Converter('zh-hans').convert(line.split()[1])
         print('The sentence is {}'.format(sentence))
-        print('Corrected sentence is {}'.format(correct(sentence, 3)))
+        corrected_ss, correct_ranges = correct(sentence)
+        print('Corrected sentence is {}'.format(corrected_ss))
         print('-------------------------------------------------------------------------------------')
+    processed_file = './data/sighan/processed/clp14csc_C1_training.pkl'
+    dataset = pickle.load(codecs.open(processed_file, 'rb')) # Loads a list of tuples: [(PASSAGE, [(location, wrong, correction)])]
+    total_errors = 0
+    reported_errors = 0
+    detected_errors = 0
+    for entry in dataset:
+        sentence, spelling_errors = entry
+        print('The sentence is {}'.format(sentence))
+        corrected_ss, correct_ranges = correct(sentence)
+        reported_errors += len(correct_ranges)
+        print('Corrected sentence is {}'.format(corrected_ss))
+        for spelling_error in spelling_errors:
+            total_errors += 1
+            location, wrong, correction = spelling_error
+            print('{} at {} should be {}'.format(wrong, location, correction))
+            for correct_range in correct_ranges:
+                if location >= correct_range[0] and location < correct_range[1]:
+                    detected_errors += 1
+        print('-------------------------------------------------------------------------------------')
+    print('Number of total errors is {}'.format(total_errors))
+    print('Number of detected errors is {}'.format(detected_errors))
+    print('Number of reported errors is {}'.format(reported_errors))
+    print('-------------------------------------------------------------------------------------')
+    processed_file = './data/sighan/processed/sighan15_A2_training.pkl'
+    dataset = pickle.load(codecs.open(processed_file, 'rb')) # Loads a list of tuples: [(PASSAGE, [(location, wrong, correction)])]
+    # total_errors = 0
+    # detected_errors = 0
+    for entry in dataset:
+        sentence, spelling_errors = entry
+        print('The sentence is {}'.format(sentence))
+        corrected_ss, correct_ranges = correct(sentence)
+        reported_errors += len(correct_ranges)
+        print('Corrected sentence is {}'.format(corrected_ss))
+        for spelling_error in spelling_errors:
+            total_errors += 1
+            location, wrong, correction = spelling_error
+            print('{} at {} should be {}'.format(wrong, location, correction))
+            for correct_range in correct_ranges:
+                if location >= correct_range[0] and location < correct_range[1]:
+                    detected_errors += 1
+        print('-------------------------------------------------------------------------------------')
+    print('Number of total errors is {}'.format(total_errors)) # Total number of errors in the ground truth labelled data
+    print('Number of detected errors is {}'.format(detected_errors)) # Number of errors correctly detected by the algorithm
+    print('Number of reported errors is {}'.format(reported_errors)) # Total number of errors reported by the algorithm
 
 if __name__=='__main__':
     main()
