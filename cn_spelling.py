@@ -191,6 +191,7 @@ def overlap(l1, l2): # Detect whether two intervals l1 and l2 overlap
             return True
 
 def get_ranges(outranges, segranges):
+    # Get the overlap ranges of outranges and segranges
     overlap_ranges = set()
     for segrange in segranges:
         for outrange in outranges:
@@ -199,7 +200,6 @@ def get_ranges(outranges, segranges):
     return [list(overlap_range) for overlap_range in overlap_ranges]
 
 def merge_ranges(ranges):
-    print('Length of ranges is {}'.format(len(ranges)))
     ranges.sort()
     saved = ranges[0][:]
     results = []
@@ -225,13 +225,12 @@ def score_sentence(ss):
             ngram = ss[i:i+k]
             ngrams.append(ngram)
             score = get_score(ngram, model=get_model(k))
-            # for _ in range(k):
             scores.append(score)
-        percentile_based_outlier(np.array(list(scores)), threshold=93)
+        # percentile_based_outlier(np.array(list(scores)), threshold=93)
         outindices, _ = mad_based_outlier(np.array(list(scores)), threshold=1.2)
         if outindices:
             outranges = merge_ranges([[outindex, outindex+k] for outindex in outindices])
-            print('outranges are {}'.format(outranges))
+            # print('outranges are {}'.format(outranges))
         else:
             outranges = []
             print('No outranges.')
@@ -248,14 +247,14 @@ def score_sentence(ss):
     per_word_scores = list(np.average(np.array(havg_scores), axis=0))
     outindices, _ = mad_based_outlier(np.array(list(per_word_scores)), threshold=1.2)
     if outindices:
-        outranges = merge_ranges([[outindex, outindex+k] for outindex in outindices])
+        outranges = merge_ranges([[outindex, outindex+1] for outindex in outindices])
         print('outranges are {}'.format(outranges))
     else:
         outranges = []
         print('No outranges.')
     return per_word_scores, houtranges, hscores, outranges
 
-def mad_based_outlier(points, threshold=1.2):
+def mad_based_outlier(points, threshold=1.4):
     points = np.array(points)
     if len(points.shape) == 1:
         points = points[:, None]
@@ -340,11 +339,11 @@ def correct(ss, k):
     tokens = list(jieba.tokenize(ss)) # Returns list of tuples (word, st, en)  mode='search'?
     print('Segmented sentence is {}'.format(''.join([str(token) for token in tokens])))
     segranges = [[token[1], token[2]] for token in tokens]
-    # outranges, hscores = score_sentence(ss, k)
-    per_word_scores, houtranges, hscores, outranges = score_sentence(ss)
+    _, _, _, outranges = score_sentence(ss)
     if outranges:
-        correct_ranges = get_ranges(outranges, segranges)
+        correct_ranges = merge_ranges(get_ranges(outranges, segranges))
         for correct_range in correct_ranges:
+            print('Correct range is {}'.format(correct_range))
             st, en = correct_range
             print('Possible wrong ngram is {}'.format(ss[st:en]))
             cgram = correct_ngram_2(ss, st, en)
