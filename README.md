@@ -20,9 +20,8 @@ A project to correct spelling errors in Chinese texts
 ### 文件结构
 ```
 data
-```
-sighan
-```
+* sighan: SIGHAN contests data
+* bcmi_data: 源自生活的语病数据集
 ```
 
 ### 参考链接
