@@ -5,6 +5,7 @@ A project to correct spelling errors in Chinese texts
 中文纠错任务
 
 ### 大致思路
+
 * 使用语言模型计算句子或序列的合理性
 * bigram, trigram, 4-gram 结合，并对每个字的分数求平均以平滑每个字的得分
 * 根据Median Absolute Deviation算出outlier分数，并结合jieba分词结果确定需要修改的范围
@@ -12,21 +13,33 @@ A project to correct spelling errors in Chinese texts
 * 句子中的错误会使分词结果更加细碎，结合替换字之后的分词结果确定需要改正的字
 * 探测句末语气词，如有错误直接改正
 
+### Idea
+* Make use of language models to calculate the likelihood of a sequence of words or a sentence
+* Combine the scores of bigram, trigram, and 4-gram scores and take the average for each character to smooth the score
+* Determine the outliers by Median Absolute Deviation (MAD) and figure out the range of characters to be corrected
+* Generate the confusion set based on character sets of similar shape/pronunciation with the target character
+* Correct the characters in the range of correction one by one
+* The error characters in the sentence would make the word segementation results have smaller granularity. Determine the character to be replaced considering the results of jieba segementation.
+* Errors in modal particles are common. Correct them directly at the end of sentences.
+
 ### TODO
 * 使用RNN语言模型推算每个字的合理概率（正反双向），以加强长距离前后文关系
 * 构建更小更贴近现实的混淆集合（形近字和近音字）
 * 从现实中收集更多的有语病或错别字的句子并标注
+* Incorporate RNN language models to capture more context information
+* Collect smaller confusion sets and make the sets more closed to daily life
+* Collect and annotate Chinese sentences with grammatical errors from daily life
 
 ### 文件结构
 ```
 data/
 * sighan/: SIGHAN contests data
-* bcmi_data/: 源自生活的语病数据集
-* wikipedia/: 中文维基数据集 xml文件、纯文本、提取工具
+* bcmi_data/: 源自生活的语病数据集 Dataset of sentences with grammatical errors
+* wikipedia/: 中文维基数据集 xml文件、纯文本、提取工具 Tools to preprocess Chinese Wikipedia texts
 * simp.pickle: similar pronunciation characters dictionary
 * sims.pickle: similar shape characters dictionary
-* simp_simplified.pickle: 过滤掉字频100一下的非常用字的版本
-* xjz.pickle: 简明形近字dictionary
+* simp_simplified.pickle: 过滤掉字频100一下的非常用字的版本 Similar pronuncation characters with less common characters filtered out
+* xjz.pickle: 简明形近字dictionary Simple similar shape dictionary
 * 
 ```
 ```
@@ -44,7 +57,7 @@ nlm/: various neural language models
 spells/: useful tools for English spelling check
 ```
 ```
-langconv.py: 简繁转换工具
+langconv.py: 简繁转换工具 Tools to convert simplified/traditional Chinese characters
 zh_wiki.py: 简繁转换dictionary
 ```
 ```
@@ -60,7 +73,7 @@ tf_char_rnn/:
 ```
 results.out: 输出log
 ```
-### 参考链接
+### 参考链接 References
 * RNN语言模型: http://karpathy.github.io/2015/05/21/rnn-effectiveness/
 * 音型码: http://mabusyao.iteye.com/blog/2267661 
 * Spellchecking by computer: http://www.dcs.bbk.ac.uk/~roger/spellchecking.html
